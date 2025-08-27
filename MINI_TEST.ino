@@ -1,17 +1,31 @@
+#include <Wire.h>
 #include <GxEPD2_BW.h>
 #include <Fonts/FreeMonoBold9pt7b.h>
 #include <Fonts/FreeMonoBold12pt7b.h>
-#include <Fonts/FreeMonoBold18pt7b.h>
-#include <Fonts/FreeSansBold12pt7b.h>
-#include <Fonts/FreeSerifBold18pt7b.h>
-
 #include "img.h" // Pozadi
 #include "cudl.h" // Cudl
+#include "Adafruit_SHT4x.h"
 
 #define DC    17  
 #define RST   16  
 #define BUSY  4 
 #define POWER 2
+
+// BATERIE ---------------------------------------------------------------
+const int batteryPins[] = {12, 13, 14, 15, 26, 27}; // GPIO piny pro 6 baterií
+const int batteryCount = 6;
+const float R1 = 96500.0; // dělič napětí rezistory
+const float R2 = 27500.0;
+const int numSamples = 20;         // počet měření pro průměr
+const float minVoltage = 3.3;      // napětí 0%
+const float maxVoltage = 4.2;      // napětí 100%
+int batteryPercentages[batteryCount]; // pole pro procenta baterií
+
+// SHT4x senzor
+Adafruit_SHT4x sht4 = Adafruit_SHT4x();
+
+double shtTemperature = 0;
+double shtHumidity = 0;
 
 // Inicializace displeje 2.13" černobílý (SSD1680 driver)
 GxEPD2_BW<GxEPD2_213_B74, GxEPD2_213_B74::HEIGHT> display(GxEPD2_213_B74(SS, DC, RST, BUSY));
@@ -19,294 +33,142 @@ GxEPD2_BW<GxEPD2_213_B74, GxEPD2_213_B74::HEIGHT> display(GxEPD2_213_B74(SS, DC,
 void setup() {
   Serial.begin(115200);
   Serial.println();
-  Serial.println("setup");
-  delay(100);
+
+  Wire.begin(21, 22); // SDA = GPIO21, SCL = GPIO22
+
+  if (!sht4.begin()) {
+    Serial.println("SHT4x sensor not found. Check wiring.");
+    while (1) delay(1);
+  }
+  sht4.setPrecision(SHT4X_HIGH_PRECISION);
+  sht4.setHeater(SHT4X_NO_HEATER);
 
   pinMode(POWER, OUTPUT);
-  digitalWrite(POWER, HIGH); // Zapnout napájení displeje
+  digitalWrite(POWER, HIGH);
   Serial.println("Display power ON");
   delay(1000);
-
-  display.init(115200, true, 2, false); // Inicializace displeje s reset pulsem 2ms
-
+  display.init(115200, true, 2, false);
   if (display.pages() > 1) {
-    delay(100);
     Serial.print("pages = ");
     Serial.print(display.pages());
-    Serial.print(" page height = ");
+    Serial.print(", page height = ");
     Serial.println(display.pageHeight());
     delay(1000);
   }
-
-
-//----------------------------------------------------------------
-//   PROGRAM   ---------------------------------------------------
-  render();
-  delay(10000);
-  //display.fillScreen(GxEPD_WHITE);  // vymazat displej
-  display.display(true); // Aktualizace displeje (bez plného refresh)
+  render(); // výchozí zobrazení
+  display.display(true);
   delay(100);
-  digitalWrite(POWER, LOW);  // Vypnout napájení displeje
+  digitalWrite(POWER, LOW);
   display.powerOff();
   Serial.println("setup done");
-//   PROGRAM   ---------------------------------------------------
-//----------------------------------------------------------------
+}
+
+float readBatteryVoltage(int pin) {
+  float sumVoltage = 0.0;
+  for (int i = 0; i < numSamples; i++) {
+    int rawValue = analogRead(pin);
+    float voltageAtPin = (rawValue / 4095.0) * 3.3;
+    float batteryVoltage = voltageAtPin * ((R1 + R2) / R2);
+    sumVoltage += batteryVoltage;
+    delay(2);
+  }
+  return sumVoltage / numSamples;
+}
+
+int voltageToPercent(float voltage) {
+  if (voltage >= maxVoltage) return 100;
+  else if (voltage <= minVoltage) return 0;
+  else return (int)(((voltage - minVoltage) / (maxVoltage - minVoltage)) * 100);
 }
 
 void loop() {
-  // Nic se zde nedělá
+  digitalWrite(POWER, HIGH);
+  display.init(115200, true, 2, false);
+
+  // Čtení baterií
+  for (int i = 0; i < batteryCount; i++) {
+    float voltage = readBatteryVoltage(batteryPins[i]);
+    batteryPercentages[i] = voltageToPercent(voltage);
+    Serial.print("Baterie ");
+    Serial.print(i + 1);
+    Serial.print(": ");
+    Serial.print(voltage, 2);
+    Serial.print(" V / Stav nabití: ");
+    Serial.print(batteryPercentages[i]);
+    Serial.println(" %");
+  }
+
+  // Čtení teploty a vlhkosti ze senzoru SHT4x
+  sensors_event_t humidity, temp;
+  sht4.getEvent(&humidity, &temp);
+  shtTemperature = temp.temperature;
+  shtHumidity = humidity.relative_humidity;
+
+  Serial.print("Teplota senzoru: "); Serial.print(shtTemperature); Serial.println(" C");
+  Serial.print("Vlhkost senzoru: "); Serial.print(shtHumidity); Serial.println(" %");
+
+  render();
+  display.display(true);
+
+  digitalWrite(POWER, LOW);
+  display.powerOff();
+
+  delay(5000);
 }
 
-
-
-//----------------------------------------------------------------
 void render() {
-
-  int baterie_1 = 100; // příklad hodnoty
-  int baterie_2 = 100; // příklad hodnoty
-  int baterie_3 = 100; // příklad hodnoty
-  int baterie_4 = 20; // příklad hodnoty
-  int baterie_5 = 75; // příklad hodnoty
-  int baterie_6 = 10; // příklad hodnoty
-
-  double teplota = 26.9;
-  int vlhkost = 37;
-
-  
   display.setRotation(0);
   display.setFont(0); // Nejmenší defaultní font
-  //display.setFont(&FreeMonoBold9pt7b);
-  
   display.setTextColor(GxEPD_BLACK);
-  int16_t tbx, tby;
-  uint16_t tbw, tbh;
-  //display.getTextBounds(HelloWorld, 0, 0, &tbx, &tby, &tbw, &tbh);
-  uint16_t x = 10;
-  uint16_t y = 80;
   display.setFullWindow();
   display.firstPage();
   do {
-    display.drawBitmap(0, 0, epd_bitmap_UX_128_250, 128, 250, GxEPD_BLACK); // Pozadí IMG
+    display.drawBitmap(0, 0, epd_bitmap_UX_128_250, 128, 250, GxEPD_BLACK);
 
+    // Lambda pro vykreslení baterie
+    auto drawBattery = [&](int x, int y, int percent) {
+      if (percent == 100) display.setCursor(x + 6, y + 70);
+      else display.setCursor(x + 10, y + 70);
+      display.print(percent);
+      display.print("%");
+      if (percent > 75) {
+        display.drawBitmap(x, y + 7, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);
+        display.drawBitmap(x, y + 21, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);
+        display.drawBitmap(x, y + 35, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);
+        display.drawBitmap(x, y + 49, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);
+      } else if (percent > 50) {
+        display.drawBitmap(x, y + 21, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);
+        display.drawBitmap(x, y + 35, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);
+        display.drawBitmap(x, y + 49, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);
+      } else if (percent > 25) {
+        display.drawBitmap(x, y + 35, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);
+        display.drawBitmap(x, y + 49, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);
+      } else if (percent > 0) {
+        display.drawBitmap(x, y + 49, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);
+      }
+    };
 
+    // Vykreslení baterií
+    drawBattery(5, 0, batteryPercentages[0]);
+    drawBattery(46, 0, batteryPercentages[1]);
+    drawBattery(87, 0, batteryPercentages[2]);
+    drawBattery(5, 78, batteryPercentages[3]);
+    drawBattery(46, 78, batteryPercentages[4]);
+    drawBattery(87, 78, batteryPercentages[5]);
 
-
-
-    // Baterie 1 ----------------------------------------------------
-    // Procenta baterie ------------------------
-    if (baterie_1 == 100) {
-      display.setCursor(11, 77);
-    } else {
-      display.setCursor(15, 77);
-    }
-    display.print(baterie_1); 
-    // Procenta baterie ------------------------
-    
-    if (baterie_1 > 75) {
-      // Zobraz všechny 4 políčka baterie
-      display.drawBitmap(5, 7, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);   // políčko baterie 4 (nejvyšší)
-      display.drawBitmap(5, 21, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  // políčko baterie 3
-      display.drawBitmap(5, 35, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  // políčko baterie 2
-      display.drawBitmap(5, 49, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  // políčko baterie 1 (nejnižší)
-    } else if (baterie_1 > 50) {
-      // Zobraz políčka 1, 2, 3
-      display.drawBitmap(5, 21, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  
-      display.drawBitmap(5, 35, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  
-      display.drawBitmap(5, 49, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  
-    } else if (baterie_1 > 25) {
-      // Zobraz políčka 1, 2
-      display.drawBitmap(5, 35, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  
-      display.drawBitmap(5, 49, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  
-    } else if (baterie_1 > 0) {
-      // Zobraz políčko 1 pouze
-      display.drawBitmap(5, 49, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);
-    }
-    // Baterie 1 ----------------------------------------------------
-
-    
-
-    // Baterie 2 ----------------------------------------------------
-    // Procenta baterie ------------------------
-    if (baterie_2 == 100) {
-      display.setCursor(51, 77);
-    } else {
-      display.setCursor(55, 77);
-    }
-    display.print(baterie_2); 
-    // Procenta baterie ------------------------
-    
-    if (baterie_2 > 75) {
-      // Zobraz všechny 4 políčka baterie
-      display.drawBitmap(46, 7, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);   // políčko baterie 4 (nejvyšší)
-      display.drawBitmap(46, 21, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  // políčko baterie 3
-      display.drawBitmap(46, 35, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  // políčko baterie 2
-      display.drawBitmap(46, 49, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  // políčko baterie 1 (nejnižší)
-    } else if (baterie_2 > 50) {
-      // Zobraz políčka 1, 2, 3
-      display.drawBitmap(46, 21, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  
-      display.drawBitmap(46, 35, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  
-      display.drawBitmap(46, 49, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  
-    } else if (baterie_2 > 25) {
-      // Zobraz políčka 1, 2
-      display.drawBitmap(46, 35, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  
-      display.drawBitmap(46, 49, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  
-    } else if (baterie_2 > 0) {
-      // Zobraz políčko 1 pouze
-      display.drawBitmap(46, 49, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);
-    }
-    // Baterie 2 ----------------------------------------------------
-    
-
-    // Baterie 3 ----------------------------------------------------
-    // Procenta baterie ------------------------
-    if (baterie_3 == 100) {
-      display.setCursor(93, 77);
-    } else {
-      display.setCursor(97, 77);
-    }
-    display.print(baterie_3); 
-    // Procenta baterie ------------------------
-    
-    if (baterie_3 > 75) {
-      // Zobraz všechny 4 políčka baterie
-      display.drawBitmap(87, 7, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);   // políčko baterie 4 (nejvyšší)
-      display.drawBitmap(87, 21, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  // políčko baterie 3
-      display.drawBitmap(87, 35, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  // políčko baterie 2
-      display.drawBitmap(87, 49, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  // políčko baterie 1 (nejnižší)
-    } else if (baterie_3 > 50) {
-      // Zobraz políčka 1, 2, 3
-      display.drawBitmap(87, 21, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  
-      display.drawBitmap(87, 35, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  
-      display.drawBitmap(87, 49, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  
-    } else if (baterie_3 > 25) {
-      // Zobraz políčka 1, 2
-      display.drawBitmap(87, 35, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  
-      display.drawBitmap(87, 49, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  
-    } else if (baterie_3 > 0) {
-      // Zobraz políčko 1 pouze
-      display.drawBitmap(87, 49, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);
-    }
-    // Baterie 3 ----------------------------------------------------
-
-
-
-    // Baterie 4 ----------------------------------------------------
-    // Procenta baterie ------------------------
-    if (baterie_4 == 100) {
-      display.setCursor(11, 115);
-    } else {
-      display.setCursor(15, 115);
-    }
-    display.print(baterie_4); 
-    // Procenta baterie ------------------------
-    
-    if (baterie_4 > 75) {
-      // Zobraz všechny 4 políčka baterie (odshora dolu)
-      display.drawBitmap(5, 178, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  // políčko baterie 4 (nejvyšší)
-      display.drawBitmap(5, 164, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  // políčko baterie 3
-      display.drawBitmap(5, 150, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  // políčko baterie 2
-      display.drawBitmap(5, 136, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  // políčko baterie 1 (nejnižší)
-    } else if (baterie_4 > 50) {
-      // Zobraz políčka 1, 2, 3
-      display.drawBitmap(5, 178, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  
-      display.drawBitmap(5, 164, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  
-      display.drawBitmap(5, 150, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  
-    } else if (baterie_4 > 25) {
-      // Zobraz políčka 1, 2
-      display.drawBitmap(5, 178, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  
-      display.drawBitmap(5, 164, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  
-    } else if (baterie_4 > 0) {
-      // Zobraz políčko 1 pouze
-      display.drawBitmap(5, 178, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);
-    }
-    // Baterie 4 ----------------------------------------------------
-
-    
-    // Baterie 5 ----------------------------------------------------
-    // Procenta baterie ------------------------
-    if (baterie_5 == 100) {
-      display.setCursor(51, 115);
-    } else {
-      display.setCursor(55, 115);
-    }
-    display.print(baterie_5); 
-    // Procenta baterie ------------------------
-    
-    if (baterie_5 > 75) {
-      // Zobraz všechny 4 políčka baterie
-      display.drawBitmap(46, 178, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  // políčko baterie 4 (nejvyšší)
-      display.drawBitmap(46, 164, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  // políčko baterie 3
-      display.drawBitmap(46, 150, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  // políčko baterie 2
-      display.drawBitmap(46, 136, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  // políčko baterie 1 (nejnižší)
-    } else if (baterie_5 > 50) {
-      // Zobraz políčka 1, 2, 3
-      display.drawBitmap(46, 178, epd_bitmap_cudl, 31, 14, GxEPD_BLACK); 
-      display.drawBitmap(46, 164, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  
-      display.drawBitmap(46, 150, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);   
-    } else if (baterie_5 > 25) {
-      // Zobraz políčka 1, 2
-      display.drawBitmap(46, 178, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  
-      display.drawBitmap(46, 164, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  
-    } else if (baterie_5 > 0) {
-      // Zobraz políčko 1 pouze
-      display.drawBitmap(46, 178, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);
-    }
-    // Baterie 5 ----------------------------------------------------
-
-    // Baterie 6 ----------------------------------------------------
-    // Procenta baterie ------------------------
-    if (baterie_6 == 100) {
-      display.setCursor(93, 115);
-    } else {
-      display.setCursor(97, 115);
-    }
-    display.print(baterie_6); 
-    // Procenta baterie ------------------------
-    
-    if (baterie_6 > 75) {
-      // Zobraz všechny 4 políčka baterie
-      display.drawBitmap(87, 178, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  // políčko baterie 4 (nejvyšší)
-      display.drawBitmap(87, 164, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  // políčko baterie 3
-      display.drawBitmap(87, 150, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  // políčko baterie 2
-      display.drawBitmap(87, 136, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  // políčko baterie 1 (nejnižší)
-    } else if (baterie_6 > 50) {
-      // Zobraz políčka 1, 2, 3
-      display.drawBitmap(87, 178, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);
-      display.drawBitmap(87, 164, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  
-      display.drawBitmap(87, 150, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  
-    } else if (baterie_6 > 25) {
-      // Zobraz políčka 1, 2
-      display.drawBitmap(87, 178, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  
-      display.drawBitmap(87, 164, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);  
-    } else if (baterie_6 > 0) {
-      // Zobraz políčko 1 pouze
-      display.drawBitmap(87, 178, epd_bitmap_cudl, 31, 14, GxEPD_BLACK);
-    }
-    // Baterie 6 ----------------------------------------------------
-
-
-
-
-    // Teplota ----------------------------------------------------
-    //display.setFont(&FreeMonoBold9pt7b); 
+    // Zobrazení teploty ze senzoru
     display.setFont(&FreeMonoBold12pt7b);
-    display.setCursor(23, 225);
-    display.print(teplota, 1); // počet desetiných míst
-    display.write(176); // ASCII kód pro znak °
+    display.setCursor(20, 205);
+    display.print(shtTemperature, 1);
+    display.write(176);
     display.print(" C");
-    // Teplota ----------------------------------------------------
 
-    // vlhkost ----------------------------------------------------
-    //display.setFont(&FreeMonoBold9pt7b); 
+    // Zobrazení vlhkosti ze senzoru
     display.setFont(&FreeMonoBold9pt7b);
-    display.setCursor(50, 245);
-    display.print(vlhkost, 1); // počet desetiných míst
-    display.write(176); // ASCII kód pro znak °
+    display.setCursor(35, 230);
+    display.print(shtHumidity, 1);
+    display.write(176);
     display.print(" %");
-    // vlhkost ----------------------------------------------------
 
-
-    
   } while (display.nextPage());
 }
-//----------------------------------------------------------------
